@@ -1,7 +1,7 @@
 # news-bot
 
-毎朝7:00 JST(GitHub Actionsの仕様上、数十分遅延することがあります)に日本語のニュースを
-取得し、世間の重要度でランキングして、総合ニュース6本・テック/科学ニュース4本を
+毎朝7:10 JST(GitHub Actionsの仕様上、数十分遅延することがあります)に日本語のニュースを
+取得し、世間の重要度でランキングして、総合ニュース10本・テック/科学ニュース4本を
 Discordに2通(embed)で届けるBotです。テレビを見なくなった分の代替として、朝に
 ざっと世の中の動きを把握するためのものです。
 
@@ -115,11 +115,14 @@ Discordに2通(embed)で届けるBotです。テレビを見なくなった分�
 |---|---|---|
 | Yahoo!トピックス (`yahoo_topics`) | 総合 | `curated_yahoo` シグナル(人手キュレーション採用)。見出しのみでリード文を持たないため、名寄せした他社記事からリード文を借りる |
 | livedoorトピックス (`livedoor_topics`) | 総合 | `curated_livedoor` シグナル(人手キュレーション採用) |
-| 朝日新聞 (`asahi`) | 総合 | シグナル無し。媒体数カウントと、要約の材料になるリード文の提供が主な役割 |
+| Yahoo!ニュース 国内/国際/経済 (`yahoo_domestic` / `yahoo_world` / `yahoo_business`) | 総合 | **総合レーンで主要なリード文の供給源**。タイトル末尾の `(産経新聞)` から実際の配信元を取り出す(`strip_paren_suffix`)。Yahoo!トピックスと同じ記事プールなので名寄せで繋がりやすい |
+| Yahoo!ニュース スポーツ/エンタメ (`yahoo_sports` / `yahoo_entertainment`) | 総合 | `lead_only: true`。配信ジャンルとしては選ばれていないが、Yahoo!トピックスが訃報や日本代表戦を拾ったときにリード文を供給する。これらの記事だけのトピックは候補から外れる |
+| 朝日新聞 (`asahi`) | 総合 | シグナル無し。媒体数カウントと名寄せのみ。**2026-09-01 時点で `<description>` が空のまま配信されており、リード文の供給源にはならない** |
 | 時事通信ランキング (`jiji_ranking`) | 総合 | `jiji_ranking` シグナル(ランキング入り) |
 | Googleニュース 総合 (`google_top`) | 総合 | シグナル無し。`representative_ok: false` のため通知の代表記事には選ばれず、名寄せと媒体数カウントのみに使う |
 | ITmedia (`itmedia`) | テック | シグナル無し。見出し先頭の `[ITmedia News]` のような角括弧を除去(`strip_bracket_prefix`)してから使う |
 | Impress Watch (`impress`) | テック | シグナル無し |
+| Yahoo!ニュース IT/科学 (`yahoo_it` / `yahoo_science`) | テック | シグナル無し。ITmedia/GIGAZINE は解説記事やコラムが多く、はてブ数で選ぶと読み物寄りに偏るため、報道寄りの記事とリード文が入る経路として追加 |
 | GIGAZINE (`gigazine`) | テック | シグナル無し |
 | Googleニュース TECHNOLOGY (`google_tech`) | テック | シグナル無し。`representative_ok: false` |
 

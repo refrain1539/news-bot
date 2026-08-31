@@ -61,6 +61,50 @@ def strip_bracket_prefix(title):
     return stripped if stripped else title
 
 
+# 見出し末尾の括弧に入った媒体名を切り出すための開き括弧・閉じ括弧。
+# Yahoo!ニュースのカテゴリ別 RSS は「見出し(産経新聞)」の形式で配信元を持つ。
+_OPEN_PARENS = "(（"
+_CLOSE_PARENS = ")）"
+
+
+def split_paren_suffix(title):
+    """見出し末尾の括弧内にある媒体名を切り出し、(見出し, 媒体名) を返す。
+
+    Yahoo!ニュースのカテゴリ別 RSS のタイトルは「見出し(産経新聞)」の形式で、
+    括弧の中に実際の配信元が入っている。これを取り出さないと、Yahoo 経由の
+    記事が何本あっても「Yahoo!ニュース1媒体」と数えられ、スコアの
+    outlet_count 項が機能しなくなる(Google ニュースと同じ問題)。
+
+    「見出し(テレビ朝日系(ANN))」のように括弧が入れ子になる場合があるため、
+    末尾から深さを数えて対応する開き括弧を探す。全角・半角のどちらも扱う。
+    括弧が無い・対応が取れない・媒体名が空か40字超なら (title, None) を返す。
+    """
+    text = title.rstrip()
+    if not text or text[-1] not in _CLOSE_PARENS:
+        return title, None
+
+    depth = 0
+    open_idx = -1
+    for i in range(len(text) - 1, -1, -1):
+        ch = text[i]
+        if ch in _CLOSE_PARENS:
+            depth += 1
+        elif ch in _OPEN_PARENS:
+            depth -= 1
+            if depth == 0:
+                open_idx = i
+                break
+    if open_idx <= 0:
+        # 対応する開き括弧が無い、または見出し全体が括弧で囲まれている
+        return title, None
+
+    outlet = text[open_idx + 1: len(text) - 1].strip()
+    headline = text[:open_idx].strip()
+    if not outlet or not headline or len(outlet) > _OUTLET_MAX_LEN:
+        return title, None
+    return headline, outlet
+
+
 def strip_html(text):
     """HTML タグを除去し、実体参照を復元したプレーンテキストを返す。
 
@@ -210,6 +254,10 @@ def parse_feed(xml_bytes, source_cfg):
         outlet = None
         if strip_suffix:
             title, outlet = split_source_suffix(title)
+        if source_cfg.get("strip_paren_suffix", False):
+            title, paren_outlet = split_paren_suffix(title)
+            if paren_outlet:
+                outlet = paren_outlet
         if source_cfg.get("strip_bracket_prefix", False):
             title = strip_bracket_prefix(title)
 
@@ -243,6 +291,7 @@ def parse_feed(xml_bytes, source_cfg):
                 lead=lead,
                 representative_ok=source_cfg.get("representative_ok", True),
                 signal=source_cfg.get("signal"),
+                lead_only=source_cfg.get("lead_only", False),
             )
         )
 

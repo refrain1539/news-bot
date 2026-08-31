@@ -179,13 +179,19 @@ def mark_seen(seen: dict[str, str], clusters: list[Cluster], today: date) -> Non
 
 def _sort_key(cluster: Cluster):
     """
-    レーン内の並べ替えキー。スコア降順 → 媒体数降順 → 代表記事の published
-    昇順(None は最後)→ 正規化 URL 昇順、で完全に決定的にする。
+    レーン内の並べ替えキー。スコア降順 → リード文あり優先 → 媒体数降順 →
+    代表記事の published 昇順(None は最後)→ 正規化 URL 昇順、で完全に決定的にする。
+
+    リード文の有無をスコアの項ではなく同点時の tiebreaker に置いているのは、
+    「要約が付くこと」より「世間の重要度」を優先するため。スコアに加点すると、
+    重要度の低い記事がリード文を持つというだけで重要なニュースを押しのける。
+    同点のときだけ要約を作れるほうを選ぶ、という強さがちょうどよい。
     """
     published = cluster.representative.published
     published_key = (published is None, published)
     return (
         -cluster.score,
+        0 if cluster.lead else 1,
         -cluster.outlet_count,
         published_key,
         normalize_url(cluster.url),
@@ -204,13 +210,26 @@ def rank_and_select(clusters, config, seen) -> dict[str, list[Cluster]]:
     spill_over = bool(config.get("spill_over", False))
     lane_ids = [lane["id"] for lane in lanes_config]
 
-    # 1. 既報を除外する。urls のうち1つでも既報なら、そのクラスタごと除外する。
+    # 1. 既報と「リード文の供給専用」クラスタを除外する。
+    #    lead_only の記事だけで構成されたクラスタは、他のソースが誰も
+    #    取り上げていない話題(例: トピックスに入っていない個別のスポーツ記事)
+    #    なので通知の候補にしない。lead_only の記事が混じっていても、
+    #    通常のソースの記事が1本でもあれば候補として残す。
     fresh_clusters = []
+    dropped_lead_only = 0
     for cluster in clusters:
+        if all(a.lead_only for a in cluster.articles):
+            dropped_lead_only += 1
+            continue
         normalized_urls = [normalize_url(u) for u in cluster.urls]
         if any(u in seen for u in normalized_urls):
             continue
         fresh_clusters.append(cluster)
+
+    if dropped_lead_only:
+        print(
+            f"[rank] リード文供給専用のトピックを{dropped_lead_only}件、候補から外しました"
+        )
 
     # 2〜4. レーンごとにスコアを計算し、min_score で足切りしてから並べ替える。
     #        レーンをまたいでスコアを比較することは絶対にしない。

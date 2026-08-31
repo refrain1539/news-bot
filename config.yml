@@ -20,7 +20,9 @@
 lanes:
   - id: general
     label: 総合
-    quota: 6
+    # 要約を読んで済ませることが多いため、見出しだけ眺める前提の6本から
+    # 10本に増やしている。候補は毎日80件前後あるので枯れる心配はない。
+    quota: 10
     min_score: 1.0
     weights:
       curated_yahoo: 3.0
@@ -76,6 +78,69 @@ sources:
     format: rss
     signal: curated_livedoor
 
+  # Yahoo!ニュースのカテゴリ別 RSS。**総合レーンで唯一のまとまったリード文の
+  # 供給源**なので外さないこと。Yahoo!トピックスは見出しだけ、朝日・時事・
+  # Google は description が空(または記事リンクの羅列)で、これを入れる前は
+  # 総合レーンでリード文を持つ記事が livedoor の11本しか無く、通知の大半が
+  # 「要約なし」になっていた。
+  #
+  # さらに、Yahoo!トピックスと同じ記事プールなので名寄せで繋がりやすく、
+  # トピックスの13文字見出しにリード文を供給する役目も果たす。
+  # タイトルは「見出し(産経新聞)」の形式で実際の配信元を含むため、
+  # strip_paren_suffix で媒体名を取り出す(これをしないと Yahoo 経由の記事が
+  # すべて1媒体と数えられ、outlet_count 項が機能しない)。
+  - id: yahoo_domestic
+    label: Yahoo!ニュース
+    lane: general
+    url: https://news.yahoo.co.jp/rss/categories/domestic.xml
+    format: rss
+    signal: null
+    strip_paren_suffix: true
+
+  - id: yahoo_world
+    label: Yahoo!ニュース
+    lane: general
+    url: https://news.yahoo.co.jp/rss/categories/world.xml
+    format: rss
+    signal: null
+    strip_paren_suffix: true
+
+  - id: yahoo_business
+    label: Yahoo!ニュース
+    lane: general
+    url: https://news.yahoo.co.jp/rss/categories/business.xml
+    format: rss
+    signal: null
+    strip_paren_suffix: true
+
+  # スポーツ・芸能は配信ジャンルとして選ばれていないが、Yahoo!トピックス
+  # 「主要」にはこれらの話題も入る(訃報・日本代表戦など)。その場合トピックスは
+  # 13文字の見出ししか持たないため、リード文を借りる相手が必要になる。
+  # lead_only: true にすることで、これらの記事だけで構成されたトピックは
+  # 通知候補から外し(rank.py)、「トピックスが拾った話題にリード文を供給する」
+  # 役目だけを担わせる。これを入れる前は「バレー女子が帰国 会見で主将謝罪」の
+  # ようなトピックが要約なしで通知されていた。
+  - id: yahoo_sports
+    label: Yahoo!ニュース
+    lane: general
+    url: https://news.yahoo.co.jp/rss/categories/sports.xml
+    format: rss
+    signal: null
+    strip_paren_suffix: true
+    lead_only: true
+
+  - id: yahoo_entertainment
+    label: Yahoo!ニュース
+    lane: general
+    url: https://news.yahoo.co.jp/rss/categories/entertainment.xml
+    format: rss
+    signal: null
+    strip_paren_suffix: true
+    lead_only: true
+
+  # 朝日は 2026-09-01 時点で <description> が空のまま配信されている。
+  # リード文の供給源にはならないが、見出しと URL は正しく取れるので
+  # 「何社が報じたか」の計数と名寄せのために残している。
   - id: asahi
     label: 朝日新聞
     lane: general
@@ -124,6 +189,25 @@ sources:
     url: https://gigazine.net/news/rss_2.0/
     format: rss
     signal: null
+
+  # テックレーン側のリード文供給源かつ「オピニオン記事ではないニュース」の供給源。
+  # ITmedia/GIGAZINE は解説記事やコラムが多く、はてブ数で選ぶと読み物寄りに
+  # 偏るため、報道寄りの記事が入る経路として追加している。
+  - id: yahoo_it
+    label: Yahoo!ニュース
+    lane: tech
+    url: https://news.yahoo.co.jp/rss/categories/it.xml
+    format: rss
+    signal: null
+    strip_paren_suffix: true
+
+  - id: yahoo_science
+    label: Yahoo!ニュース
+    lane: tech
+    url: https://news.yahoo.co.jp/rss/categories/science.xml
+    format: rss
+    signal: null
+    strip_paren_suffix: true
 
   - id: google_tech
     label: Googleニュース

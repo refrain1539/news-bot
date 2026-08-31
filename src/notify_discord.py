@@ -148,7 +148,14 @@ def format_topic(cluster: Cluster, rank: int) -> str:
 
     # 2社のときは「A ほか1社」より両方の名前を出したほうが読みやすく、
     # 行の長さもほとんど変わらない。3社以上になると長くなるので件数表記にする。
+    # 代表記事の媒体を先頭に持ってくる。メタ行の直後に出す URL は代表記事の
+    # ものなので、先頭に出す媒体名がリンク先と一致していないと読み手が混乱する
+    # (クラスタ内の並び順は配信時刻順で、代表記事が先頭とは限らない)。
     outlets = cluster.outlets
+    rep_outlet = cluster.representative.outlet
+    if rep_outlet in outlets:
+        outlets = [rep_outlet] + [o for o in outlets if o != rep_outlet]
+
     if cluster.outlet_count >= 3:
         outlet_part = f"{outlets[0]} ほか{cluster.outlet_count - 1}社"
     elif cluster.outlet_count == 2:
