@@ -255,3 +255,113 @@ def datetime_jst(year, month, day, hour, minute):
     from datetime import datetime
 
     return datetime(year, month, day, hour, minute, tzinfo=JST)
+
+
+# =========================================================
+# split_paren_suffix
+# =========================================================
+
+from fetch_feeds import split_paren_suffix  # noqa: E402
+
+
+def test_split_paren_suffixは見出しと媒体名を分割する():
+    headline, outlet = split_paren_suffix("生活道路の法定速度、時速60キロから30キロに(産経新聞)")
+    assert headline == "生活道路の法定速度、時速60キロから30キロに"
+    assert outlet == "産経新聞"
+
+
+def test_split_paren_suffixは入れ子の括弧でも外側の対応する開き括弧で分割する():
+    headline, outlet = split_paren_suffix("和菓子店の店主殺害(テレビ朝日系（ANN）)")
+    assert headline == "和菓子店の店主殺害"
+    assert outlet == "テレビ朝日系（ANN）"
+
+
+def test_split_paren_suffixは全角括弧のみでも分割できる():
+    headline, outlet = split_paren_suffix("見出し（共同通信）")
+    assert headline == "見出し"
+    assert outlet == "共同通信"
+
+
+def test_split_paren_suffixは括弧が無ければ媒体名Noneを返す():
+    headline, outlet = split_paren_suffix("見出しのみ")
+    assert headline == "見出しのみ"
+    assert outlet is None
+
+
+def test_split_paren_suffixは見出し全体が括弧で囲まれていれば分割しない():
+    title = "(お知らせ)"
+    headline, outlet = split_paren_suffix(title)
+    assert headline == title
+    assert outlet is None
+
+
+def test_split_paren_suffixは媒体名が空なら分割しない():
+    title = "見出し()"
+    headline, outlet = split_paren_suffix(title)
+    assert headline == title
+    assert outlet is None
+
+
+def test_split_paren_suffixは媒体名が40字超なら分割しない():
+    long_outlet = "な" * 41
+    title = f"見出し({long_outlet})"
+    headline, outlet = split_paren_suffix(title)
+    assert headline == title
+    assert outlet is None
+
+
+def test_split_paren_suffixは閉じ括弧に対応する開き括弧が無ければ分割しない():
+    title = "見出し)"
+    headline, outlet = split_paren_suffix(title)
+    assert headline == title
+    assert outlet is None
+
+
+# =========================================================
+# parse_feed (strip_paren_suffix / lead_only)
+# =========================================================
+
+YAHOO_STYLE_RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<item>
+<title>生活道路の法定速度、時速60キロから30キロに(産経新聞)</title>
+<link>https://news.yahoo.co.jp/articles/xyz</link>
+<description>本文の説明として十分な長さのリード文がここにあります。</description>
+<pubDate>Tue, 01 Sep 2026 09:00:00 +0900</pubDate>
+</item>
+</channel>
+</rss>
+"""
+
+
+def test_parse_feedはstrip_paren_suffixが真ならtitleから括弧が取れoutletに媒体名が入る():
+    cfg = _source_cfg(id="yahoo_topics", label="Yahoo!ニュース", strip_paren_suffix=True)
+    articles = parse_feed(YAHOO_STYLE_RSS_XML.encode("utf-8"), cfg)
+    assert len(articles) == 1
+    article = articles[0]
+    assert article.title == "生活道路の法定速度、時速60キロから30キロに"
+    assert article.outlet == "産経新聞"
+
+
+def test_parse_feedはstrip_paren_suffixを指定しなければoutletはlabelのまま():
+    cfg = _source_cfg(id="yahoo_topics", label="Yahoo!ニュース")
+    articles = parse_feed(YAHOO_STYLE_RSS_XML.encode("utf-8"), cfg)
+    assert len(articles) == 1
+    article = articles[0]
+    assert article.title == "生活道路の法定速度、時速60キロから30キロに(産経新聞)"
+    assert article.outlet == "Yahoo!ニュース"
+
+
+def test_parse_feedはlead_onlyが真ならArticleのlead_onlyがTrueになる():
+    cfg = _source_cfg(id="yahoo_sports", label="Yahoo!スポーツ", lead_only=True)
+    articles = parse_feed(YAHOO_STYLE_RSS_XML.encode("utf-8"), cfg)
+    assert len(articles) == 1
+    assert articles[0].lead_only is True
+
+
+def test_parse_feedはlead_onlyを指定しなければArticleのlead_onlyはFalse():
+    cfg = _source_cfg(id="yahoo_topics", label="Yahoo!ニュース")
+    articles = parse_feed(YAHOO_STYLE_RSS_XML.encode("utf-8"), cfg)
+    assert len(articles) == 1
+    assert articles[0].lead_only is False
