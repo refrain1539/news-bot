@@ -1,8 +1,13 @@
 # Discord通知の設定手順
 
 news-bot(日本語ニュースの日次通知bot)をDiscordに通知させるための、手作業での準備手順です。
-Bot本体の実装(`src/notify_discord.py`など)は完成しているので、ここではDiscord側の設定と
-GitHub Secretsへの登録という、コードでは自動化できない部分だけを扱います。
+Bot本体の実装(`src/notify_discord.py`など)は完成しているので、ここではDiscord側の設定・
+GitHubへのリポジトリ作成・Secretsへの登録という、コードでは自動化できない部分だけを扱います。
+
+**このリポジトリはまだGitHub上にありません。** ローカルの`task-news-bot`フォルダに
+コミットがあるだけの状態です。SecretsはGitHub上のリポジトリにしか登録できず、
+ワークフローもpushされて初めてActionsタブに現れるため、**手順7でリポジトリを作成します**。
+手順8以降で「このリポジトリ」と書かれているのは、すべて手順7で作るリポジトリのことです。
 
 この方式はDiscord Bot TokenによるREST API送信のみを使います。Gateway(WebSocket)への
 常時接続は行わないため、GitHub Actions上でcron実行するだけで動作します。常駐サーバーを
@@ -136,10 +141,55 @@ news-botは要約の生成に既存のGemini APIを使います。arxiv-bot用�
 見出しとリンクだけの通知になります。まずは要約無しで動作確認だけ済ませ、
 あとからキーを追加する、という進め方でも問題ありません。
 
-## 7. GitHub Secretsに登録する
+## 7. GitHubにリポジトリを作成してpushする
 
-このリポジトリの「Settings」タブ→左メニューの「Secrets and variables」→
-「Actions」を開きます。
+次の手順でSecretsを登録する「リポジトリ」とは、**このnews-botのリポジトリを
+GitHub上に作ったもの**を指します。現時点ではまだローカル(`task-news-bot`
+フォルダ)にコミットがあるだけで、GitHub上には存在しません。Secretsは
+GitHub上のリポジトリにしか登録できず、ワークフローもGitHub上にpushされて
+初めてActionsタブに現れるため、先にリポジトリを作ります。
+
+`task-news-bot` フォルダで以下を実行してください。arxiv-botに合わせて公開する
+場合はこちらです。
+
+```bash
+gh repo create news-bot --public --source=. --remote=origin --push
+```
+
+非公開にする場合はこちらを使ってください。どちらを選んでもnews-botの動作は
+変わりません(APIキーはコードに含まれず、すべてSecretsに置くためです)。
+
+```bash
+gh repo create news-bot --private --source=. --remote=origin --push
+```
+
+> **こうなればOK**: コマンドの出力に
+> `https://github.com/<あなたのユーザー名>/news-bot` というURLが表示され、
+> ブラウザでそのURLを開くと `src/` `config.yml` `docs/` などが並んだ
+> リポジトリのページが見えます。
+
+pushできたことを確認します。
+
+```bash
+git log --oneline origin/main -1
+```
+
+> **こうなればOK**: `feat: 日次ニュース通知bot (news-bot) の初期実装` の
+> コミットが表示されます。`unknown revision` のようなエラーが出る場合は
+> pushが完了していないので、`git push -u origin main` を実行してください。
+
+以降の手順で「このリポジトリ」と書かれている箇所は、すべてここで作成した
+`news-bot` リポジトリのことです。
+
+## 8. GitHub Secretsに登録する
+
+手順7で作成したリポジトリのページを開き、「Settings」タブ→左メニューの
+「Secrets and variables」→「Actions」を開きます。
+
+> **注意**: 「Settings」タブが見当たらない場合は、自分がオーナーではない
+> リポジトリを開いている可能性があります。URLが
+> `https://github.com/<あなたのユーザー名>/news-bot` になっているか
+> 確認してください。
 
 > **こうなればOK**: 「Repository secrets」という見出しの下に
 > 「New repository secret」ボタンが表示されます。
@@ -159,7 +209,8 @@ Secret欄に手順2でコピーしたTokenを貼り付けて「Add secret」を�
 Secret欄に手順6で取得したAPIキーを貼り付けて「Add secret」を押します。
 
 要約無しでまず動作確認したい場合は、この`GEMINI_API_KEY`の登録は後回しにしても
-構いません(手順9のdry_run確認は`GEMINI_API_KEY`が無くても実行できます)。
+構いません(手順9のdry_run確認は`GEMINI_API_KEY`が無くても実行できます。
+このあと手順9で dry_run 実行し、ログを見てから追加しても間に合います)。
 
 > **こうなればOK**: Secrets一覧に `DISCORD_BOT_TOKEN` / `DISCORD_CHANNEL_ID` /
 > `GEMINI_API_KEY` の3つが並んで表示されます。
@@ -171,7 +222,7 @@ Secret欄に手順6で取得したAPIキーを貼り付けて「Add secret」を
 > **こうなればOK**(`GEMINI_MODEL`を設定する場合のみ): Secrets一覧に
 > `GEMINI_MODEL` が追加されます。
 
-## 8. 動作確認
+## 9. 動作確認
 
 リポジトリの「Actions」タブを開き、ワークフロー `daily-news`
 (`.github/workflows/daily.yml`)を選んで「Run workflow」をクリックします。
@@ -199,7 +250,7 @@ URLは`data/seen_urls.json`に記録され、`config.yml`の`seen_ttl_days`(14�
 やり直したい場合は`data/seen_urls.json`の該当エントリを削除してから実行して
 ください。
 
-## 9. 定期実行を有効にする際の注意
+## 10. 定期実行を有効にする際の注意
 
 動作確認が済み、cronによる自動実行を有効にする前に、必ずユーザーの承認を得て
 ください(本プロジェクトの規約上、定期実行の本番トリガー有効化は承認制です)。
@@ -223,7 +274,10 @@ URLは`data/seen_urls.json`に記録され、`config.yml`の`seen_ttl_days`(14�
   やり直すか、チャンネルの権限設定でBotのロールにアクセスを許可してください。
 - **404 Not Found**: `DISCORD_CHANNEL_ID` が誤っています。手順5の方法で
   チャンネルIDを取り直し、Secretsを更新してください。
-- **通知が空になる/件数が少ない**: 上記(手順8)のとおり、同じ日に2回実行すると
+- **Settingsタブが見当たらない / Actionsタブにワークフローが出てこない**:
+  手順7のリポジトリ作成とpushが済んでいません。`git remote -v` を実行して
+  `origin` が表示されるか確認してください。何も出なければ未作成です。
+- **通知が空になる/件数が少ない**: 上記(手順9)のとおり、同じ日に2回実行すると
   `data/seen_urls.json`により大半のトピックが既報扱いになります。まずは
   `data/seen_urls.json`を確認し、対象URLが記録されていないか確かめてください。
   それでも心当たりが無い場合は、`config.yml`の`min_score`(この点数未満は
