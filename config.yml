@@ -1,0 +1,197 @@
+# =========================================================
+# news-bot 設定ファイル
+# ユーザーが編集する唯一のファイルです。
+# =========================================================
+
+# ---------------------------------------------------------
+# レーン(通知枠)
+# ---------------------------------------------------------
+# スコアはレーン内でしか比較しません。総合レーンとテックレーンを1つのプールに
+# 混ぜると、curated_yahoo / curated_livedoor の項が定義上いつも0になるテック記事は
+# 構造的に1本も選ばれません。そのため枠(quota)を固定で分けています。
+#
+# quota    ... そのレーンから通知する最大本数
+# min_score... この点数未満のトピックは、枠が余っていても通知しない
+#              (穴埋めのために質の低い記事を入れない)
+# weights  ... スコアの重み。キーの意味は下記のとおり:
+#                curated_*    : 対応する signal を持つソースに載っていれば加点
+#                outlet_count : (報じた媒体数 - 1) に対する係数
+#                hatena       : log10(はてブ数 + 1) に対する係数
+lanes:
+  - id: general
+    label: 総合
+    quota: 6
+    min_score: 1.0
+    weights:
+      curated_yahoo: 3.0
+      curated_livedoor: 2.0
+      outlet_count: 1.0
+      hatena: 1.5
+      jiji_ranking: 0.5
+
+  - id: tech
+    label: テック・科学
+    quota: 4
+    min_score: 1.0
+    # テックレーンには Yahoo!トピックス相当の人手キュレーションが存在しないため、
+    # 報道媒体数とはてブ件数の比重を上げています。
+    weights:
+      outlet_count: 1.5
+      hatena: 2.5
+
+# あるレーンで quota が埋まらなかったとき、余った枠をもう一方のレーンに回すか。
+# false の場合は本数を減らしてそのまま通知します(推奨)。
+spill_over: false
+
+# ---------------------------------------------------------
+# ニュースソース
+# ---------------------------------------------------------
+# format:
+#   rss ... RSS 2.0 (<channel><item>, <pubDate>)
+#   rdf ... RSS 1.0 / RDF (<item rdf:about>, <dc:date>)
+# signal:
+#   スコアの weights のキーに対応。null ならスコアに直接は寄与せず、
+#   名寄せと媒体数のカウントにのみ使われる。
+# representative_ok:
+#   false のソースは通知の代表記事に選ばれない。Google ニュースの URL は
+#   news.google.com のリダイレクトで、リンク先として見苦しく、はてブ件数も
+#   元記事と一致しないため false にしている。
+# strip_source_suffix:
+#   true なら、タイトル末尾の「 - 媒体名」を切り出して outlet に格納する。
+#   Google ニュースのタイトルはこの形式になっている。
+sources:
+  # ---- 総合レーン ----
+  - id: yahoo_topics
+    label: Yahoo!トピックス
+    lane: general
+    url: https://news.yahoo.co.jp/rss/topics/top-picks.xml
+    format: rss
+    signal: curated_yahoo
+    # 見出しのみでリード文を持たない。他社記事と名寄せしてリード文を借りる。
+
+  - id: livedoor_topics
+    label: livedoorトピックス
+    lane: general
+    url: https://news.livedoor.com/topics/rss/top.xml
+    format: rss
+    signal: curated_livedoor
+
+  - id: asahi
+    label: 朝日新聞
+    lane: general
+    url: https://www.asahi.com/rss/asahi/newsheadlines.rdf
+    format: rdf
+    signal: null
+
+  - id: jiji_ranking
+    label: 時事通信
+    lane: general
+    url: https://www.jiji.com/rss/ranking.rdf
+    format: rdf
+    signal: jiji_ranking
+
+  - id: google_top
+    label: Googleニュース
+    lane: general
+    url: https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja
+    format: rss
+    signal: null
+    representative_ok: false
+    strip_source_suffix: true
+
+  # ---- テック・科学レーン ----
+  - id: itmedia
+    label: ITmedia
+    lane: tech
+    url: https://rss.itmedia.co.jp/rss/2.0/itmedia_all.xml
+    format: rss
+    signal: null
+    # ITmedia の見出しは「[ITmedia News] 本文…」のように媒体名の角括弧が
+    # 前置される。通知の見た目が悪いだけでなく、全記事に共通する文字列が
+    # 入ることで名寄せの類似度を底上げしてしまうため取り除く。
+    strip_bracket_prefix: true
+
+  - id: impress
+    label: Impress Watch
+    lane: tech
+    url: https://www.watch.impress.co.jp/data/rss/1.0/ipw/feed.rdf
+    format: rdf
+    signal: null
+
+  - id: gigazine
+    label: GIGAZINE
+    lane: tech
+    url: https://gigazine.net/news/rss_2.0/
+    format: rss
+    signal: null
+
+  - id: google_tech
+    label: Googleニュース
+    lane: tech
+    url: https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=ja&gl=JP&ceid=JP:ja
+    format: rss
+    signal: null
+    representative_ok: false
+    strip_source_suffix: true
+
+# 採用しなかったソースと理由(再検討時の判断材料として残す):
+#   NHK 公式 RSS (www3.nhk.or.jp/rss/news/cat*.xml)
+#     2026-08-30 時点で全カテゴリの最新記事が3週間前で止まっており、更新されていない。
+#   EurekAlert 日本語版 (jp.eurekalert.org/rss.xml)
+#     配信停止。item が0件。
+#   Google ニュース SCIENCE セクション
+#     最新記事が4日前で、日次の新着ボットには鮮度が足りない。
+#   NewsAPI.org
+#     無料枠は24時間遅延かつ開発用途限定で、新着通知に使えない。
+#   各社サイトのスクレイピング
+#     利用規約と著作権の両面でリスクがあるため採用しない。
+
+# ---------------------------------------------------------
+# 取得・名寄せ
+# ---------------------------------------------------------
+# 何時間前までに配信された記事を対象にするか。
+# 毎朝7:00 JST 実行で、前日の早朝以降をカバーする想定。
+# pubDate を持たない記事は「今」の配信とみなして常に対象に含める。
+lookback_hours: 30
+
+# 名寄せの閾値。タイトルを正規化した文字 bigram 集合の
+# 重なり係数(Szymkiewicz-Simpson, |A∩B| / min(|A|,|B|))がこの値以上なら
+# 同一話題とみなす。上げると名寄せが起きにくくなり、下げると無関係な話題まで
+# 1つにまとめられる。
+#
+# Jaccard ではなく重なり係数を使っているのは、Yahoo!トピックスの見出しが
+# 13〜16字に固定されている(13文字ルール)のに対し他社は23〜54字あり、
+# Jaccard では正解ペアでも構造的に閾値へ届かないためです。詳細は
+# src/cluster.py の overlap_coefficient() のコメントを参照してください。
+#
+# 2026-08-31 の実データでは、正解ペアが 0.385〜0.857、無関係なペアの最大が
+# 0.214 で、0.35 はその間に十分な余裕をもって収まっています。
+cluster_threshold: 0.35
+
+# 重なり係数が閾値を超えていても、共通する bigram がこの数に満たなければ
+# 同一話題とみなさない。重なり係数は片方の見出しが極端に短いと少数の一致でも
+# 1.0 に近づくため、この絶対数の下限で暴発を止めます。
+min_shared_bigrams: 4
+
+# ---------------------------------------------------------
+# 既報の除外
+# ---------------------------------------------------------
+# 一度通知したトピックの URL を data/seen_urls.json に記録し、
+# この日数だけ再通知を抑制する。
+seen_ttl_days: 14
+
+# ---------------------------------------------------------
+# 要約 (Gemini)
+# ---------------------------------------------------------
+# 1日1リクエストで全トピックをまとめて要約する。無料枠の RPD を消費しないための措置。
+# モデル名は環境変数 GEMINI_MODEL で上書きできる。
+gemini_model: gemini-3.6-flash
+
+# 1トピックあたりの要約の目安文字数(日本語)。2行程度に収まる長さ。
+summary_max_chars: 120
+
+# ---------------------------------------------------------
+# 通知
+# ---------------------------------------------------------
+# 全レーンで通知対象が0件だった日にも「本日は該当なし」と通知するか。
+notify_when_empty: false
