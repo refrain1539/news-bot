@@ -46,6 +46,7 @@ BASE_DIR = os.path.dirname(SRC_DIR)
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+import article_cache  # noqa: E402
 import cluster as cluster_mod  # noqa: E402
 import fetch_feeds  # noqa: E402
 import hatena_count  # noqa: E402
@@ -58,6 +59,10 @@ JST = timezone(timedelta(hours=9))
 
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yml")
 SEEN_PATH = os.path.join(BASE_DIR, "data", "seen_urls.json")
+# collect.py が3時間おきに書き足している記事の蓄積。
+# RSS は直近N件しか返さないため(Yahoo!トピックスは実測1.9時間分)、
+# 朝の1回の取得だけではその日の主要ニュースの2割弱しか見えない。
+CACHE_PATH = os.path.join(BASE_DIR, "data", "article_cache.jsonl")
 
 
 def load_config(path=CONFIG_PATH):
@@ -139,12 +144,43 @@ def main():
     # 0. 天気(ニュースより先に1通送る)。失敗してもニュースは続行する。
     run_weather(config, date_str, dry_run)
 
-    # 1. RSS 取得
-    articles = fetch_feeds.fetch_all(config, now=now)
+    # 1. RSS 取得。collect.py が3時間おきに貯めた蓄積と合わせる。
+    #    蓄積を使わないと、その日の主要ニュースの大半を候補にできない
+    #    (Yahoo!トピックスのフィードは実測で1.9時間分しか返さない)。
+    #    蓄積の読み込みに失敗しても、当日ぶんだけで通知は成立させる。
+    fresh = fetch_feeds.fetch_all(config, now=now)
+    try:
+        cached_all = article_cache.load(CACHE_PATH)
+    except Exception as e:
+        print(f"[main] 蓄積の読み込みに失敗しました(当日ぶんだけで続行します): {e}")
+        cached_all = []
+
+    # 蓄積には lookback より古い記事も残っている(TTL は lookback より長い)ので、
+    # 通知の候補にするぶんだけ当日の対象時間帯に絞る。
+    # 書き戻すときは絞る前の cached_all を使うこと。絞ったほうを保存すると、
+    # まだ TTL 内なのに lookback から外れただけの記事を毎朝捨ててしまう。
+    cutoff = now - timedelta(hours=config["lookback_hours"])
+    cached_recent = [
+        a for a in cached_all if a.published is None or a.published >= cutoff
+    ]
+
+    articles = article_cache.merge(cached_recent, fresh)
     if not articles:
-        # 全フィードが落ちている状況。通知する中身が無いのでここで終える。
+        # 全フィードが落ちていて蓄積も空の状況。通知する中身が無い。
         print("[main] 記事を1件も取得できませんでした。処理を終了します")
         return 1
+
+    # 当日ぶんの取得結果を蓄積に書き戻す。朝の実行も収集の1回分として扱う。
+    if not dry_run and fresh:
+        try:
+            article_cache.save(
+                CACHE_PATH,
+                article_cache.merge(cached, fresh),
+                config.get("cache_ttl_hours", 36),
+                now,
+            )
+        except Exception as e:
+            print(f"[main] 蓄積の保存に失敗しました(通知は続行します): {e}")
 
     # 2. 名寄せ
     clusters = cluster_mod.cluster_articles(

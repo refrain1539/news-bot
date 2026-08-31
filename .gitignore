@@ -6,6 +6,10 @@ __pycache__/
 .venv/
 venv/
 
+# article_cache.save() が os.replace で差し替える前に書く一時ファイル。
+# 正常終了すれば残らないが、途中で落ちたときに紛れ込むのを防ぐ。
+data/*.tmp
+
 # pytest の生成物
 # .pytest_tmp は tests/conftest.py が tmp_path の置き場所として使う
 # (Windows の %TEMP% 配下が使えない環境への回避策)

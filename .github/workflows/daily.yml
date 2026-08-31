@@ -73,6 +73,11 @@ jobs:
         run: |
           git config user.name "news-bot"
           git config user.email "news-bot@users.noreply.github.com"
-          git add data/seen_urls.json
-          git diff --quiet --cached || git commit -m "chore: update seen urls $(date -u +'%Y-%m-%d')"
+          # main.py は当日ぶんの取得結果を記事の蓄積にも書き戻すため、
+          # seen_urls.json と article_cache.jsonl の両方をcommitする。
+          git add data/seen_urls.json data/article_cache.jsonl
+          git diff --quiet --cached || git commit -m "chore: update bot state $(date -u +'%Y-%m-%d')"
+          # collect ワークフローが3時間おきに同じ data/ 配下へcommitするため、
+          # pullせずにpushすると rejected になることがある。rebaseで取り込んでからpushする。
+          git pull --rebase origin main
           git push
