@@ -25,7 +25,7 @@ import time
 
 import requests
 
-from models import Cluster
+from models import Cluster, DayForecast
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
@@ -249,7 +249,10 @@ def notify(selected: dict, lanes_cfg: list, env: dict, date_str: str, dry_run: b
     token = env.get("DISCORD_BOT_TOKEN")
     channel_id = env.get("DISCORD_CHANNEL_ID")
 
-    if not token or not channel_id:
+    # dry_run の判定はトークンの有無より先に行う。DRY_RUN は「本番前に中身を
+    # 目で確認する」ための機能なので、トークンを持たないローカル環境でも
+    # 組み立てた内容が読めなければ意味がない。
+    if not dry_run and (not token or not channel_id):
         print(
             "[notify_discord] DISCORD_BOT_TOKEN / DISCORD_CHANNEL_ID が未設定のため、"
             "Discord通知をスキップします"
@@ -312,5 +315,195 @@ def notify_empty(env: dict, date_str: str, dry_run: bool = False) -> int:
 
     if ok:
         print("[notify_discord] 「該当なし」を投稿しました")
+        return 1
+    return 0
+
+
+# =========================================================
+# 天気予報
+# =========================================================
+# 気温の扱いは models.py の DayForecast 周辺のコメントを参照。
+# 毎時気温(Open-Meteo)は参考値、日最高/最低(official_low/high, 気象庁)が
+# あればそちらを見出しに使う。無ければ毎時値の最大/最小から「(参考)」付きで出す。
+
+WEATHER_COLOR = 0xF39C12
+
+# 時間帯ブロック定義: (表示ラベル(全角スペースで5文字幅に揃え済み), 開始時, 終了時)
+# 時刻は tenki.jp と同じ 1〜24 表記。ブロック名は tenki.jp の時間帯名に合わせている。
+TIME_BLOCKS = (
+    ("未明　　　", 1, 3),
+    ("明け方　　", 4, 6),
+    ("朝　　　　", 7, 9),
+    ("昼前　　　", 10, 12),
+    ("昼過ぎ　　", 13, 15),
+    ("夕方　　　", 16, 18),
+    ("夜のはじめ", 19, 21),
+    ("夜遅く　　", 22, 24),
+)
+
+
+def _weather_mark(code: int) -> str:
+    """
+    weather.py の weather_mark() を遅延 import して使う。
+    weather.py は別エージェントが同時に作成中でまだ無い/書きかけの場合があるため、
+    モジュール先頭ではなく関数内で import し、ImportError は "❓" にフォールバックする。
+    """
+    try:
+        from weather import weather_mark
+    except ImportError:
+        return "❓"
+    return weather_mark(code)
+
+
+def format_day_forecast(day: DayForecast, pop_threshold: int = 50) -> str:
+    """
+    1日分の天気予報を Markdown 文字列に組み立てる。
+
+    書式(実データで描画確認済み):
+      **今日 09/01(火)**　最高36℃ / 最低26℃　🌅05:29 🌇18:24
+      `未明　　　` 🌤️🌤️🌤️　26〜26℃
+      `明け方　　` 🌤️🌤️🌦️　25〜26℃
+      `朝　　　　` 🌦️🌦️🌦️　26〜26℃　☔51%
+
+    - 見出しの気温は has_official_temps が True なら気象庁の日最高/最低、
+      False なら毎時気温の最大/最小から「(参考)」付きで出す。
+      毎時データが1件も無ければ気温部分ごと省略する。
+    - sunrise/sunset は None ならその部分ごと省略する(両方無ければ見出しの
+      その区切り全体を省略する)。
+    - 各時間帯ブロックは、対応する HourPoint が1件も無ければ行ごと省略する。
+      一部の時刻だけ欠けている場合はあるだけの絵文字・気温幅で組み立てる。
+    - ブロック内 pop の最大値が pop_threshold 以上のときだけ ☔ を付ける。
+    """
+    if day.has_official_temps:
+        temp_part = f"最高{day.official_high:.0f}℃ / 最低{day.official_low:.0f}℃"
+    elif day.hours:
+        temp_part = (
+            f"最高{max(h.temperature for h in day.hours):.0f}℃ / "
+            f"最低{min(h.temperature for h in day.hours):.0f}℃(参考)"
+        )
+    else:
+        temp_part = ""
+
+    sun_parts = []
+    if day.sunrise:
+        sun_parts.append(f"🌅{day.sunrise}")
+    if day.sunset:
+        sun_parts.append(f"🌇{day.sunset}")
+
+    header = f"**{day.label}**"
+    if temp_part:
+        header += f"　{temp_part}"
+    if sun_parts:
+        header += f"　{' '.join(sun_parts)}"
+
+    lines = [header]
+
+    hours_by_num = {h.hour: h for h in day.hours}
+    for label, start, end in TIME_BLOCKS:
+        block_hours = [hours_by_num[h] for h in range(start, end + 1) if h in hours_by_num]
+        if not block_hours:
+            continue
+
+        marks = "".join(_weather_mark(h.weather_code) for h in block_hours)
+        lo = min(h.temperature for h in block_hours)
+        hi = max(h.temperature for h in block_hours)
+        line = f"`{label}` {marks}　{lo:.0f}〜{hi:.0f}℃"
+
+        max_pop = max(h.pop for h in block_hours)
+        if max_pop >= pop_threshold:
+            line += f"　☔{max_pop}%"
+
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def build_weather_embed(days: list[DayForecast], weather_cfg: dict, date_str: str) -> dict:
+    """
+    天気予報の embed を組み立てる。
+
+    description は build_embed と同じ方針で、EMBED_DESCRIPTION_MAX と
+    (EMBED_TOTAL_MAX - title文字数 - footer文字数) の小さい方に収まるよう、
+    日単位で入るところまで入れる(入りきらない日は丸ごと落とす。
+    途中で切れた時間帯表を出さないため)。
+
+    footer には毎時気温が参考値であることを必ず明記する
+    (Open-Meteo の毎時気温は気象庁の地点予報より数℃低く出るため)。
+    """
+    title = _truncate(
+        f"⛅ {weather_cfg.get('label', '')}の天気　{date_str}", EMBED_TITLE_MAX
+    )
+
+    if any(day.has_official_temps for day in days):
+        footer_text = "毎時の気温はOpen-Meteoの参考値 / 最高・最低は気象庁の地点予報"
+    else:
+        footer_text = "気温はOpen-Meteoの参考値"
+
+    pop_threshold = weather_cfg.get("pop_alert_threshold", 50)
+    day_texts = [format_day_forecast(day, pop_threshold) for day in days]
+
+    budget = min(EMBED_DESCRIPTION_MAX, EMBED_TOTAL_MAX - len(title) - len(footer_text))
+
+    included = []
+    used = 0
+    for text in day_texts:
+        added_len = len(text) if not included else len(text) + 2
+        if used + added_len > budget:
+            continue
+        included.append(text)
+        used += added_len
+
+    description = "\n\n".join(included)
+
+    return {
+        "title": title,
+        "description": description,
+        "color": WEATHER_COLOR,
+        "footer": {"text": footer_text},
+    }
+
+
+def notify_weather(
+    days: list[DayForecast], weather_cfg: dict, env: dict, date_str: str, dry_run: bool = False
+) -> int:
+    """
+    天気予報を1通の embed として Discord へ通知する。
+    天気が送れなくてもニュースの通知は続けたいため、失敗しても例外は投げない。
+
+    戻り値: 送信に成功したメッセージ数(dry_run のときは常に0)。
+    """
+    if not days:
+        print("[notify_discord] 天気予報データが無いため、天気通知をスキップします")
+        return 0
+
+    embed = build_weather_embed(days, weather_cfg, date_str)
+
+    # dry_run の判定はトークンの有無より先に行う。DRY_RUN は「本番前に中身を
+    # 目で確認する」ための機能なので、トークンを持たないローカル環境でも
+    # 組み立てた内容が読めなければ意味がない。
+    if dry_run:
+        print("[notify_discord] (DRY_RUN) 天気予報の送信予定内容:")
+        print(embed["title"])
+        print(embed["description"])
+        return 0
+
+    token = env.get("DISCORD_BOT_TOKEN")
+    channel_id = env.get("DISCORD_CHANNEL_ID")
+
+    if not token or not channel_id:
+        print(
+            "[notify_discord] DISCORD_BOT_TOKEN / DISCORD_CHANNEL_ID が未設定のため、"
+            "Discord通知をスキップします"
+        )
+        return 0
+
+    try:
+        ok = _send_embed(embed, token, channel_id, dry_run=dry_run)
+    except Exception as e:
+        print(f"[notify_discord] 天気予報の投稿に失敗しました: {e}")
+        return 0
+
+    if ok:
+        print("[notify_discord] 天気予報を投稿しました")
         return 1
     return 0

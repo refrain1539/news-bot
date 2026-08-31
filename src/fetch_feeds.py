@@ -92,6 +92,36 @@ def split_source_suffix(title):
     return headline, outlet
 
 
+# リード文として中身を持たない定型文。livedoor の description は記事によって
+# 本文リードではなく "記事を読む" だけのことがあり、GIGAZINE は末尾に
+# "続きを読む..." が付く。前者をそのまま Gemini に渡すと、見出しだけを材料に
+# 内容を捏造した要約が返ってくるため、リード文なし(None)として扱う。
+_LEAD_BOILERPLATE = {"記事を読む", "続きを読む", "全文を読む", "詳細を見る", "もっと見る"}
+# 本文末尾に付く誘導文。中身の判定をする前に取り除く。
+_LEAD_TAIL_RE = re.compile(
+    r"(?:…|\.{2,})?\s*(?:続きを読む|記事を読む|全文を読む)\s*(?:…|\.{2,})?\s*$"
+)
+# これより短いリード文は要約の材料にならないと判断する。
+_LEAD_MIN_CHARS = 15
+
+
+def clean_lead(text):
+    """description をリード文として使えるか判定し、使えなければ None を返す。
+
+    末尾の「続きを読む…」のような誘導文を取り除いたうえで、定型文だけの場合と
+    短すぎる場合を弾く。要約を捏造させないための入口側の防波堤。
+    """
+    lead = strip_html(text)
+    if not lead:
+        return None
+    lead = _LEAD_TAIL_RE.sub("", lead).strip()
+    if not lead or lead in _LEAD_BOILERPLATE:
+        return None
+    if len(lead) < _LEAD_MIN_CHARS:
+        return None
+    return lead
+
+
 def _local_name(tag):
     """要素タグから "{namespace}" 部分を取り除いたローカル名を返す。"""
     if tag.startswith("{"):
@@ -200,9 +230,7 @@ def parse_feed(xml_bytes, source_cfg):
             # Google ニュースの description は記事リンクの羅列でリード文ではない
             lead = None
         else:
-            lead = strip_html(raw_description)
-            if not lead:
-                lead = None
+            lead = clean_lead(raw_description)
 
         articles.append(
             Article(

@@ -3,6 +3,7 @@ news-bot のエントリポイント。
 
 毎朝1回 GitHub Actions から実行され、以下の順に処理する:
 
+  0. weather      ... 今日と明日の時間帯別天気を取得し、ニュースより先に1通送る
   1. fetch_feeds  ... config.yml の全ソースから RSS を取得し Article に正規化する
   2. cluster      ... 同じ話題を報じた記事を名寄せして Cluster(トピック)にまとめる
   3. hatena_count ... 各トピックのはてなブックマーク件数を取得する(重要度の指標)
@@ -19,6 +20,8 @@ news-bot のエントリポイント。
 - **各段は失敗しても後続を止めない**。はてブが取れなくても、Gemini が落ちていても、
   見出しとリンクだけの通知には価値がある。逆に、フィードが1件も取れなかった場合だけは
   通知する中身が無いので早期終了する。
+- **天気とニュースは互いに独立**。天気の取得元が落ちていてもニュースは届き、
+  ニュースが0件でも天気は届く。両者は別メッセージとして送る。
 - DRY_RUN=1 のときは Discord への送信・Gemini への送信・状態ファイルの保存を行わず、
   組み立てた内容をログに出すだけにする。本番トリガーを有効にする前の確認用。
 
@@ -49,6 +52,7 @@ import hatena_count  # noqa: E402
 import notify_discord  # noqa: E402
 import rank  # noqa: E402
 import summarize  # noqa: E402
+import weather  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
 
@@ -91,6 +95,37 @@ def attach_hatena_counts(clusters):
         c.hatena_count = max(values) if values else 0
 
 
+def run_weather(config, date_str, dry_run):
+    """
+    天気予報を取得して Discord に投稿する。ニュースより先に1通送る。
+
+    天気とニュースは互いに独立させている。天気の取得元(Open-Meteo / 気象庁)が
+    落ちていてもニュースは届くべきで、逆にニュースが0件でも天気は見たいため、
+    ここで発生した例外はすべて握りつぶしてログに残すだけにする。
+    """
+    weather_cfg = config.get("weather") or {}
+    if not weather_cfg.get("enabled", False):
+        print("[main] weather.enabled が false のため天気はスキップします")
+        return
+
+    try:
+        days = weather.build_forecasts(weather_cfg)
+    except Exception as e:
+        print(f"[main] 天気の取得に失敗しました(ニュースの通知は続行します): {e}")
+        return
+
+    if not days:
+        print("[main] 天気予報を取得できませんでした(ニュースの通知は続行します)")
+        return
+
+    try:
+        notify_discord.notify_weather(
+            days, weather_cfg, os.environ, date_str, dry_run=dry_run
+        )
+    except Exception as e:
+        print(f"[main] 天気の通知に失敗しました(ニュースの通知は続行します): {e}")
+
+
 def main():
     dry_run = os.environ.get("DRY_RUN") == "1"
     if dry_run:
@@ -100,6 +135,9 @@ def main():
     now = datetime.now(JST)
     date_str = now.strftime("%Y-%m-%d")
     print(f"[main] 実行日時: {now.isoformat()}")
+
+    # 0. 天気(ニュースより先に1通送る)。失敗してもニュースは続行する。
+    run_weather(config, date_str, dry_run)
 
     # 1. RSS 取得
     articles = fetch_feeds.fetch_all(config, now=now)

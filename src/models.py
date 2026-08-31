@@ -15,6 +15,7 @@ rank / summarize / notify_discord)はここで定義された型だけをやり�
 """
 
 from dataclasses import dataclass, field
+from datetime import date as date_type
 from datetime import datetime
 from typing import Optional
 
@@ -119,3 +120,66 @@ class Cluster:
     def has_signal(self, signal: str) -> bool:
         """指定のシグナル(例: "curated_yahoo")を持つ記事を含むか。"""
         return any(a.signal == signal for a in self.articles)
+
+
+# =========================================================
+# 天気予報
+# =========================================================
+# 気温の扱いについて(重要):
+#
+# 毎時の予報を無料で出しているのは Open-Meteo だが、その気温は京都では
+# 気象庁の地点予報より 3〜5℃ 低く出る(2026-09-01 実測: 気象庁 35℃ /
+# tenki.jp 33.8℃ / Open-Meteo 30.3℃)。京都盆地の日中高温を格子モデルが
+# 捉えきれないためで、標高差が原因ではない(69m と 41m で 0.4℃ しか動かない)。
+#
+# 毎時カーブを線形リスケールして日最高/最低を公式値に合わせる補正も試したが、
+# 格子モデルの振幅 5.5℃ を公式の 10℃ に引き伸ばすと係数が 1.8 倍になり、
+# 夕方が 34〜36℃ に張り付く非現実的な結果になったため採用していない。
+#
+# したがって気温は補正せず、二段で持つ:
+#   official_low / official_high ... 気象庁の地点予報(正確な日最高/最低)
+#   HourPoint.temperature        ... Open-Meteo の毎時値(形は信頼できる参考値)
+# 通知でも「毎時の気温は参考値」と明示する。要約を捏造させないのと同じ方針。
+
+
+@dataclass
+class HourPoint:
+    """1時間ぶんの予報。"""
+
+    # tenki.jp と同じ 1〜24 の表記(24 は翌日の00時にあたる)
+    hour: int
+    # WMO weather code。絵文字と和名への対応は weather.py の WMO_CODES が持つ
+    weather_code: int
+    # Open-Meteo の毎時気温(℃)。上記のとおり参考値
+    temperature: float
+    # 降水確率(%)
+    pop: int
+    # 降水量(mm/h)
+    precipitation: float
+    # 湿度(%)
+    humidity: int
+    # 風速(m/s)
+    wind_speed: float
+    # 風向(度。0=北, 90=東)
+    wind_direction: int
+
+
+@dataclass
+class DayForecast:
+    """1日ぶんの予報。通知はこれを2件(今日・明日)並べて1メッセージにする。"""
+
+    date: date_type
+    # 通知の見出しに使う表記(例: "今日 09/01(火)")
+    label: str
+    # 1時から24時までの HourPoint。フィードの都合で欠ける時間がありうる
+    hours: list[HourPoint]
+    # "05:29" / "18:24" 形式。取得できなければ None
+    sunrise: Optional[str] = None
+    sunset: Optional[str] = None
+    # 気象庁の地点予報による日最低/最高気温(℃)。取得できなければ None
+    official_low: Optional[float] = None
+    official_high: Optional[float] = None
+
+    @property
+    def has_official_temps(self) -> bool:
+        return self.official_low is not None and self.official_high is not None
