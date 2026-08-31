@@ -215,11 +215,20 @@ def rank_and_select(clusters, config, seen) -> dict[str, list[Cluster]]:
     #    取り上げていない話題(例: トピックスに入っていない個別のスポーツ記事)
     #    なので通知の候補にしない。lead_only の記事が混じっていても、
     #    通常のソースの記事が1本でもあれば候補として残す。
+    #    require_lead が true の場合は、リード文が取れなかったトピックも
+    #    ここで落とす。要約を作れないトピックは見出しとリンクだけの通知に
+    #    なるが、それは読まれないため通知する意味が薄い、という運用方針。
+    require_lead = bool(config.get("require_lead", False))
+
     fresh_clusters = []
     dropped_lead_only = 0
+    dropped_no_lead = 0
     for cluster in clusters:
         if all(a.lead_only for a in cluster.articles):
             dropped_lead_only += 1
+            continue
+        if require_lead and not cluster.lead:
+            dropped_no_lead += 1
             continue
         normalized_urls = [normalize_url(u) for u in cluster.urls]
         if any(u in seen for u in normalized_urls):
@@ -229,6 +238,11 @@ def rank_and_select(clusters, config, seen) -> dict[str, list[Cluster]]:
     if dropped_lead_only:
         print(
             f"[rank] リード文供給専用のトピックを{dropped_lead_only}件、候補から外しました"
+        )
+    if dropped_no_lead:
+        print(
+            f"[rank] リード文が取れず要約を作れないトピックを{dropped_no_lead}件、"
+            f"候補から外しました(require_lead: true)"
         )
 
     # 2〜4. レーンごとにスコアを計算し、min_score で足切りしてから並べ替える。

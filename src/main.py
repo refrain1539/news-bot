@@ -187,6 +187,29 @@ def main():
     except Exception as e:
         print(f"[main] 要約に失敗しました(要約なしで通知を続行します): {e}")
 
+    # 5b. require_lead のとき、Gemini が要約を返さなかったトピックを落とす。
+    #
+    #     rank 側でリード文の有無は絞ってあるが、リード文があっても Gemini が
+    #     そのトピックだけ返さないことがある(応答の一部破損など)。要約を読む
+    #     前提の運用なので、ここでも落としておく。
+    #
+    #     ただし要約が1件も作れなかった場合(APIキー未設定・Gemini障害・DRY_RUN)は
+    #     全部落として無音になってしまうため、そのときは何もしない。見出しだけでも
+    #     届いたほうが、何も届かないよりよい。
+    if config.get("require_lead", False) and not dry_run:
+        summarized = [c for c in chosen if c.summary]
+        if not summarized:
+            print(
+                "[main] 要約が1件も生成されなかったため、"
+                "要約なしのまま通知します(全件を落とすと無音になるため)"
+            )
+        elif len(summarized) < len(chosen):
+            for lane_id in selected:
+                selected[lane_id] = [c for c in selected[lane_id] if c.summary]
+            dropped = len(chosen) - len(summarized)
+            chosen = summarized
+            print(f"[main] 要約が付かなかった{dropped}件を通知から外しました")
+
     # 6. Discord 通知
     sent = notify_discord.notify(
         selected, config["lanes"], os.environ, date_str, dry_run=dry_run

@@ -361,3 +361,105 @@ class TestRankAndSelect:
 
         assert result["general"][0] == high_score_no_lead
         assert result["general"][1] == low_score_with_lead
+
+    def test_require_lead_trueならスコアが高くてもリード文なしのクラスタは除外される(
+        self, make_article, make_cluster
+    ):
+        config = make_config(general_quota=5)
+        config["require_lead"] = True
+
+        high_score_no_lead = make_cluster(
+            [
+                make_article(
+                    "高スコア・リードなし",
+                    url="https://example.com/no-lead",
+                    lane="general",
+                    signal="curated_yahoo",
+                )
+            ],
+            lane="general",
+        )
+        low_score_with_lead = make_cluster(
+            [
+                make_article(
+                    "低スコア・リードあり",
+                    url="https://example.com/with-lead",
+                    lane="general",
+                    lead="要約の材料になる十分な長さのリード文です。",
+                )
+            ],
+            lane="general",
+        )
+
+        result = rank_and_select([high_score_no_lead, low_score_with_lead], config, seen={})
+
+        assert result["general"] == [low_score_with_lead]
+
+    def test_require_lead_falseが既定でリード文なしでも選抜される(self, make_article, make_cluster):
+        config = make_config(general_quota=5)
+        config["require_lead"] = False
+
+        high_score_no_lead = make_cluster(
+            [
+                make_article(
+                    "高スコア・リードなし",
+                    url="https://example.com/no-lead-2",
+                    lane="general",
+                    signal="curated_yahoo",
+                )
+            ],
+            lane="general",
+        )
+        low_score_with_lead = make_cluster(
+            [
+                make_article(
+                    "低スコア・リードあり",
+                    url="https://example.com/with-lead-2",
+                    lane="general",
+                    lead="要約の材料になる十分な長さのリード文です。",
+                )
+            ],
+            lane="general",
+        )
+
+        result = rank_and_select([high_score_no_lead, low_score_with_lead], config, seen={})
+
+        assert result["general"][0] == high_score_no_lead
+
+    def test_require_lead_trueでも代表記事以外がリード文を持てば除外されない(
+        self, make_article, make_cluster
+    ):
+        config = make_config(general_quota=5)
+        config["require_lead"] = True
+
+        rep = make_article("見出し", lead=None, lane="general", signal="curated_yahoo")
+        other = make_article("別見出し", lead="十分な長さのリード文です。", lane="general")
+        cluster = make_cluster([rep, other], lane="general", representative=rep)
+
+        result = rank_and_select([cluster], config, seen={})
+
+        assert result["general"] == [cluster]
+
+    def test_require_lead_trueでもlead_onlyだけのクラスタは別途除外される(
+        self, make_cluster
+    ):
+        from models import Article
+
+        config = make_config(general_quota=5)
+        config["require_lead"] = True
+
+        a = Article(
+            title="見出し",
+            url="https://example.com/lead-only-3",
+            source="yahoo_sports",
+            outlet="テスト媒体",
+            lane="general",
+            signal="curated_yahoo",
+            lead="十分な長さのリード文です。",
+            lead_only=True,
+        )
+        cluster = make_cluster([a], lane="general")
+
+        result = rank_and_select([cluster], config, seen={})
+
+        assert result["general"] == []
