@@ -335,24 +335,25 @@ def notify_empty(env: dict, date_str: str, dry_run: bool = False) -> int:
 
 WEATHER_COLOR = 0xF39C12
 
-# 時間帯ブロック定義: (表示ラベル(全角スペースで5文字幅に揃え済み), 開始時, 終了時)
-# 時刻は tenki.jp と同じ 1〜24 表記。ブロック名は tenki.jp の時間帯名に合わせている。
-TIME_BLOCKS = (
-    ("未明　　　", 1, 3),
-    ("明け方　　", 4, 6),
-    ("朝　　　　", 7, 9),
-    ("昼前　　　", 10, 12),
-    ("昼過ぎ　　", 13, 15),
-    ("夕方　　　", 16, 18),
-    ("夜のはじめ", 19, 21),
-    ("夜遅く　　", 22, 24),
-)
+# 1行あたりの既定の時間数。表の最大幅は「5 + 3 × 列数」セルになる。
+# 8列なら29セルで、スマートフォンの画面でも横スクロールせずに読める。
+# 12列(41セル)にすると1日が2段で収まるが、幅の狭い端末では折り返す。
+# 1行にまとめる時間数。3 なら「01-03」「04-06」…の8行になる。
+#
+# 1時間ごとに横一列で並べる表(時刻/天気/気温/降水の4行を code block に入れたもの)も
+# 実装して実機で試したが、Discord は code block の中でも絵文字を画像として描画して
+# 等幅グリッドに乗らないため、桁がずれて読めなかった。行ごとに独立した縦並びなら
+# 桁揃えに依存しないので、絵文字を使っても崩れない。
+DEFAULT_HOURS_PER_BLOCK = 3
+
+# 降水量を表示する下限(mm/h)。これ未満のブロックには降水量を出さない。
+DEFAULT_PRECIP_MIN_DISPLAY = 0.1
 
 
 def _weather_mark(code: int) -> str:
     """
     weather.py の weather_mark() を遅延 import して使う。
-    weather.py は別エージェントが同時に作成中でまだ無い/書きかけの場合があるため、
+    weather.py が読み込めない環境でもこのモジュール単体を import できるよう、
     モジュール先頭ではなく関数内で import し、ImportError は "❓" にフォールバックする。
     """
     try:
@@ -362,24 +363,103 @@ def _weather_mark(code: int) -> str:
     return weather_mark(code)
 
 
-def format_day_forecast(day: DayForecast, pop_threshold: int = 50) -> str:
+def format_precipitation(mm) -> str:
+    """降水量(mm/h)を表示用の文字列にする。値が読めなければ空文字を返す。
+
+    降水確率ではなく降水量を出すのは、「傘が要るか」ではなく「外を歩けるか」を
+    判断したいため。1mm/h 未満は小数第1位まで(0.3mm)、1mm/h 以上は整数(3mm)で出す。
+    霧雨と本降りの差が判断の分かれ目になるので、小さい側の解像度を残している。
+    """
+    if mm is None:
+        return ""
+    try:
+        value = float(mm)
+    except (TypeError, ValueError):
+        return ""
+    if value < 0:
+        return ""
+    if value < 1:
+        # round() は銀行丸めなので 0.05 が 0.0 に落ちる。Decimal を使わずに
+        # 済ませるため、四捨五入は floor(x*10 + 0.5) で自前に行う。
+        tenths = int(value * 10 + 0.5)
+        return f"{tenths / 10:.1f}mm"
+    return f"{int(value + 0.5)}mm"
+
+
+# 降水量セル1つぶんの文字数。0.1〜9.9 の3文字に全ての表記を合わせる。
+PRECIP_CELL_WIDTH = 3
+# 降水量が0の時間を表す記号。3文字ぶんのハイフンにして、数値の桁と揃える。
+PRECIP_NONE_MARK = "-" * PRECIP_CELL_WIDTH
+# 10mm/h 以上をまとめる表記。この強さなら正確な値を出しても判断は変わらない
+# (どちらにせよ外を歩けない)ので、桁を揃えることを優先する。
+PRECIP_HEAVY_MARK = "10+"
+
+
+def format_precip_value(mm) -> str:
+    """1時間ぶんの降水量を、必ず3文字の文字列にする。
+
+    3文字に固定するのは、複数の時間を "/" で連ねたときにスラッシュの位置が
+    行ごとにずれると読みにくいため。0 は "---"、0.1〜9.9 は小数第1位まで、
+    10mm/h 以上は "10+" にする。
+    """
+    if mm is None:
+        return PRECIP_NONE_MARK
+    try:
+        value = float(mm)
+    except (TypeError, ValueError):
+        return PRECIP_NONE_MARK
+    if value < 0.05:
+        return PRECIP_NONE_MARK
+    if value >= 9.95:
+        return PRECIP_HEAVY_MARK
+    # round() は銀行丸めで 0.05 が 0.0 に落ちるため、四捨五入は自前で行う。
+    tenths = int(value * 10 + 0.5)
+    return f"{tenths / 10:.1f}"
+
+
+def format_precip_series(hours) -> str:
+    """時間帯内の各時間の降水量を "---/0.3/0.3" の形にする。
+
+    ブロックの最大値だけを出すと「3時間のうちどこで降るのか」が分からず、
+    出かける時刻を決められない。天気マークが1時間ずつ並ぶのと同じ順序で
+    1時間ずつの値を並べる。各値は3文字に固定してあるので、時間数が同じなら
+    どの行でもスラッシュの位置が揃う。
+    """
+    if not hours:
+        return ""
+    return "/".join(format_precip_value(h.precipitation) for h in hours)
+
+
+def format_day_forecast(day: DayForecast,
+                        hours_per_block: int = DEFAULT_HOURS_PER_BLOCK,
+                        precip_min: float = DEFAULT_PRECIP_MIN_DISPLAY) -> str:
     """
     1日分の天気予報を Markdown 文字列に組み立てる。
 
-    書式(実データで描画確認済み):
-      **今日 09/01(火)**　最高36℃ / 最低26℃　🌅05:29 🌇18:24
-      `未明　　　` 🌤️🌤️🌤️　26〜26℃
-      `明け方　　` 🌤️🌤️🌦️　25〜26℃
-      `朝　　　　` 🌦️🌦️🌦️　26〜26℃　☔51%
+    書式:
+      **今日 09/01(火)**　最高35℃ / 最低27℃　🌅05:29 🌇18:24
+      `01-03` 🌤️🌤️🌤️　26〜26℃
+      `04-06` 🌤️🌤️🌦️　25〜26℃　☔0.3mm
+
+    レイアウトについて:
+
+      1時間ごとに横一列で並べる表(時刻/天気/気温/降水の4行を code block に
+      入れたもの)も実装して実機で試したが、Discord は code block の中でも
+      絵文字を画像として描画して等幅グリッドに乗らないため、桁がずれて
+      読めなかった。行ごとに独立したこの縦並びなら桁揃えに依存しないので、
+      絵文字を使っても崩れない。
+
+      時間帯のラベルは「未明」「明け方」のような呼称ではなく `01-03` の形式に
+      している。呼称は何時を指すのか覚えていないと読めないうえ、文字数が
+      揃わずインラインコードの幅がばらつく。時刻表記なら常に半角5文字で揃う。
 
     - 見出しの気温は has_official_temps が True なら気象庁の日最高/最低、
       False なら毎時気温の最大/最小から「(参考)」付きで出す。
       毎時データが1件も無ければ気温部分ごと省略する。
-    - sunrise/sunset は None ならその部分ごと省略する(両方無ければ見出しの
-      その区切り全体を省略する)。
-    - 各時間帯ブロックは、対応する HourPoint が1件も無ければ行ごと省略する。
-      一部の時刻だけ欠けている場合はあるだけの絵文字・気温幅で組み立てる。
-    - ブロック内 pop の最大値が pop_threshold 以上のときだけ ☔ を付ける。
+    - sunrise/sunset は None ならその部分ごと省略する。
+    - 降水量はブロック内の最大値。precip_min 未満なら表示しない
+      (降らない時間のほうが多く、0.0mm を全行に並べても情報量が無いため)。
+    - 対応する HourPoint が1件も無いブロックは行ごと省略する。
     """
     if day.has_official_temps:
         temp_part = f"最高{day.official_high:.0f}℃ / 最低{day.official_low:.0f}℃"
@@ -405,20 +485,35 @@ def format_day_forecast(day: DayForecast, pop_threshold: int = 50) -> str:
 
     lines = [header]
 
+    size = max(1, int(hours_per_block or DEFAULT_HOURS_PER_BLOCK))
     hours_by_num = {h.hour: h for h in day.hours}
-    for label, start, end in TIME_BLOCKS:
-        block_hours = [hours_by_num[h] for h in range(start, end + 1) if h in hours_by_num]
-        if not block_hours:
+
+    # 1時から24時までを size 時間ずつに区切る。フィードの都合で欠けている時刻は
+    # 飛ばすが、ラベルはブロックの範囲そのもの(01-03)を出す。
+    for start_hour in range(1, 25, size):
+        end_hour = min(start_hour + size - 1, 24)
+        block = [
+            hours_by_num[h]
+            for h in range(start_hour, end_hour + 1)
+            if h in hours_by_num
+        ]
+        if not block:
             continue
 
-        marks = "".join(_weather_mark(h.weather_code) for h in block_hours)
-        lo = min(h.temperature for h in block_hours)
-        hi = max(h.temperature for h in block_hours)
+        label = f"{start_hour:02d}-{end_hour:02d}"
+        marks = "".join(_weather_mark(h.weather_code) for h in block)
+        lo = min(h.temperature for h in block)
+        hi = max(h.temperature for h in block)
         line = f"`{label}` {marks}　{lo:.0f}〜{hi:.0f}℃"
 
-        max_pop = max(h.pop for h in block_hours)
-        if max_pop >= pop_threshold:
-            line += f"　☔{max_pop}%"
+        # ブロック内に precip_min 以上の時間が1つでもあれば、そのブロックの
+        # 全時間ぶんを1時間ずつ並べる。1つも無ければ ☔ ごと省略する
+        # (降らない時間のほうが多く、"-/-/-" を8行並べても情報量が無いため)。
+        # 数値の並びはインラインコード(等幅フォント)に入れる。地の文の
+        # プロポーショナルフォントだと "1" と "." の幅が違い、3文字に揃えても
+        # 見た目の幅が揃わないため。
+        if any((h.precipitation or 0) >= precip_min for h in block):
+            line += f"　☔`{format_precip_series(block)}`mm"
 
         lines.append(line)
 
@@ -441,13 +536,19 @@ def build_weather_embed(days: list[DayForecast], weather_cfg: dict, date_str: st
         f"⛅ {weather_cfg.get('label', '')}の天気　{date_str}", EMBED_TITLE_MAX
     )
 
+    # 降水の表記は説明がないと読めないので footer で必ず凡例を出す。
+    # 「·」が0であることが分からないと、表の大半が意味不明になる。
+    legend = "☔は1時間ごとの降水量(mm/h、-はなし)"
     if any(day.has_official_temps for day in days):
-        footer_text = "毎時の気温はOpen-Meteoの参考値 / 最高・最低は気象庁の地点予報"
+        footer_text = f"最高・最低は気象庁 / 時間帯の気温はOpen-Meteoの参考値 ・ {legend}"
     else:
-        footer_text = "気温はOpen-Meteoの参考値"
+        footer_text = f"気温はOpen-Meteoの参考値 ・ {legend}"
 
-    pop_threshold = weather_cfg.get("pop_alert_threshold", 50)
-    day_texts = [format_day_forecast(day, pop_threshold) for day in days]
+    hours_per_block = weather_cfg.get("hours_per_block", DEFAULT_HOURS_PER_BLOCK)
+    precip_min = weather_cfg.get("precip_min_display", DEFAULT_PRECIP_MIN_DISPLAY)
+    day_texts = [
+        format_day_forecast(day, hours_per_block, precip_min) for day in days
+    ]
 
     budget = min(EMBED_DESCRIPTION_MAX, EMBED_TOTAL_MAX - len(title) - len(footer_text))
 
