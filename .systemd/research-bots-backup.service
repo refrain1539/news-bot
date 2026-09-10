@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up research bot state data
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=seiya
+Group=seiya
+WorkingDirectory=/home/seiya/services/news-bot
+ExecStart=/home/seiya/services/news-bot/.systemd/backup-research-bots
+TimeoutStartSec=35min
+NoNewPrivileges=true
+PrivateTmp=true
+

@@ -1,0 +1,13 @@
+[Unit]
+Description=Send the daily weather and news digest at 07:10 (Asia/Tokyo)
+
+[Timer]
+OnCalendar=*-*-* 07:10:00 Asia/Tokyo
+AccuracySec=1min
+RandomizedDelaySec=0
+Persistent=false
+Unit=research-bots-news-daily.service
+
+[Install]
+WantedBy=timers.target
+

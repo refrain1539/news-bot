@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Create one coherent, private snapshot while both bot data locks are held.
+set -euo pipefail
+
+readonly SERVICES_DIR=/home/seiya/services
+readonly BACKUP_DIR=/home/seiya/backups/research-bots
+readonly NEWS_LOCK="$SERVICES_DIR/news-bot/.run/bot.lock"
+readonly ARXIV_LOCK="$SERVICES_DIR/arxiv-bot/.run/bot.lock"
+readonly KEEP=14
+
+umask 077
+mkdir -p "$BACKUP_DIR"
+timestamp="$(date --iso-8601=seconds | tr ':+' '--' | tr 'T' '_')"
+archive="$BACKUP_DIR/${timestamp}.tar.gz"
+staging="$(mktemp -d "$BACKUP_DIR/.staging.XXXXXX")"
+trap 'rm -rf "$staging"' EXIT
+
+# The nested locks make the two data trees a single snapshot.  All production
+# jobs use the same per-bot lock paths, including a manually started service.
+flock -w 900 "$NEWS_LOCK" flock -w 900 "$ARXIV_LOCK" \
+  tar --create --gzip --file "$staging/bots-data.tar.gz" -C "$SERVICES_DIR" \
+    news-bot/data news-bot/config.yml arxiv-bot/data arxiv-bot/config.yml
+
+mv "$staging/bots-data.tar.gz" "$archive"
+(cd "$BACKUP_DIR" && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
+
+# Keep the newest requested number of archives and their matching checksums.
+mapfile -t old_archives < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.tar.gz' -printf '%T@ %p\n' | sort -nr | tail -n +$((KEEP + 1)) | cut -d' ' -f2-)
+for old in "${old_archives[@]}"; do
+  rm -f -- "$old" "$old.sha256"
+done
+
+echo "backup created: $archive"

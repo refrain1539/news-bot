@@ -1,0 +1,13 @@
+[Unit]
+Description=Create a daily private backup of research bot state
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Tokyo
+AccuracySec=5min
+RandomizedDelaySec=0
+Persistent=false
+Unit=research-bots-backup.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,16 @@
+[Unit]
+Description=Send the daily weather and news digest
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=seiya
+Group=seiya
+WorkingDirectory=/home/seiya/services/news-bot
+EnvironmentFile=/home/seiya/.config/research-bots/news.env
+ExecStart=/usr/bin/flock -w 900 /home/seiya/services/news-bot/.run/bot.lock /home/seiya/services/news-bot/.venv/bin/python /home/seiya/services/news-bot/src/main.py
+TimeoutStartSec=35min
+NoNewPrivileges=true
+PrivateTmp=true
+

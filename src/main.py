@@ -175,7 +175,7 @@ def main():
         try:
             article_cache.save(
                 CACHE_PATH,
-                article_cache.merge(cached, fresh),
+                article_cache.merge(cached_all, fresh),
                 config.get("cache_ttl_hours", 36),
                 now,
             )

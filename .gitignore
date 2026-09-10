@@ -19,3 +19,5 @@ tests/.pytest_tmp/
 # 秘密情報(ローカルでの手動実行用。GitHub Actions では Secrets を使う)
 .env
 .env.local
+/.venv/
+/.run/
