@@ -1,5 +1,9 @@
 name: collect-articles
 
+# 本番の定期実行は Ubuntu の research-bots-news-collect.timer へ移行済み。
+# workflow_dispatch は障害復旧・DRY_RUN確認専用として残す。本番の手動実行は
+# Ubuntu 側の systemd service を使い、GitHub Actions からは行わない。
+
 # RSS は「直近N件」のスライディングウィンドウで配信されており、1回の取得
 # だけでは数時間分の記事しか見えません(2026-09-01 の実測: Yahoo!トピックス
 # 8件=1.9時間分)。朝1回の本番実行(daily.yml, 7:10 JST)だけでは、発表から
@@ -11,10 +15,6 @@ name: collect-articles
 # DISCORD_BOT_TOKEN 等の Secrets は渡しません(不要な権限を与えないため)。
 
 on:
-  schedule:
-    # 3時間おき。分を :00 ではなく :05 にしているのは、毎時ちょうどは
-    # GitHub Actions のスケジュール実行が最も混雑して遅延しやすいため。
-    - cron: '5 */3 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

@@ -1,6 +1,6 @@
 # news-bot
 
-毎朝7:10 JST(GitHub Actionsの仕様上、数十分遅延することがあります)に日本語のニュースを
+Ubuntuのsystemd timerで毎朝7:10 JSTに日本語のニュースを
 取得し、世間の重要度でランキングして、総合ニュース10本・テック/科学ニュース4本を
 Discordに2通(embed)で届けるBotです。テレビを見なくなった分の代替として、朝に
 ざっと世の中の動きを把握するためのものです。
@@ -14,8 +14,15 @@ Discordに2通(embed)で届けるBotです。テレビを見なくなった分�
 届けます。そのため毎朝の通知は合計**3通**(天気 / 総合ニュース / テック・科学
 ニュース)になります。詳細は下記の「天気予報」の節を参照してください。
 
-金銭コストはかかりません。GitHub Actions無料枠 + Gemini API無料枠のみで動作し、
+金銭コストはかかりません。Gemini API無料枠と既存の外部サービスだけで動作し、
 有料APIは一切使いません。
+
+## 本番運用
+
+定期実行と本番の手動実行はUbuntuのsystemd service/timerで行う。GitHub Actionsの
+workflow_dispatchは障害復旧・DRY_RUN確認用に残しているが、移行後の本番手動実行には
+使用しない。運用コマンド、バックアップ、更新・復元手順は
+[`docs/ubuntu-operation.md`](docs/ubuntu-operation.md)を参照。
 
 ## 仕組み(パイプライン)
 
@@ -316,10 +323,10 @@ RSSは「直近N件」のスライディングウィンドウで、**1回の取�
 ためです。名寄せの失敗ではありません(Googleニュース側とは重なり係数0.846で
 きちんと一致していました)。
 
-そこで `.github/workflows/collect.yml` が**3時間おきに記事だけを集めて**
+そこでUbuntuの `research-bots-news-collect.timer` が**3時間おきに記事だけを集めて**
 `data/article_cache.jsonl` に貯め、朝の本番実行がその蓄積と当日ぶんを合わせて
 処理します。**収集は通知も要約もしません**(Gemini・DiscordのSecretsも渡していません)。
-Publicリポジトリなので GitHub Actions の実行時間は無料無制限で、追加コストはゼロです。
+追加コストはゼロです。
 
 - 形式は **JSON Lines**(1行1記事)。`published` の昇順で書き出すので、3時間おきの
   更新でも git の差分が「末尾への追加 + 先頭からの削除」に収まり、履歴が膨らみにくい。
@@ -341,8 +348,8 @@ Publicリポジトリなので GitHub Actions の実行時間は無料無制限�
 
 **同じ日に2回実行すると、2回目はほぼ空(または大幅に件数が減った状態)になります。**
 これは不具合ではなく、1回目の実行で通知した記事のURLが既報として記録されるためです。
-GitHub Actions側は本番実行(dry_runでない)のあとに `data/seen_urls.json` を
-自動でcommit・pushします(`.github/workflows/daily.yml` の最終ステップ)。
+Ubuntu側の本番実行後に `data/seen_urls.json` を更新します。日常実行ではgit commitや
+pushを行いません。
 
 ## 著作権・利用規約について
 
@@ -354,8 +361,7 @@ GitHub Actions側は本番実行(dry_runでない)のあとに `data/seen_urls.j
   限定しています。個人のDiscordサーバーへの通知はこの範囲ですが、この内容を
   Webサイトなどへ転載することはできません。
 
-## 定期実行の有効化
+## 定期実行
 
-`.github/workflows/daily.yml` の `cron` はコメントアウトされた状態で置いてあります。
-`workflow_dispatch` の手動実行(`dry_run: true` → `dry_run: false` の順)でDiscordへの
-実際の投稿まで確認してから、コメントを外して定期実行を有効にしてください。
+本番scheduleはUbuntuの `research-bots-news-collect.timer` と
+`research-bots-news-daily.timer` が担う。GitHub workflowにはscheduleを設定しない。
